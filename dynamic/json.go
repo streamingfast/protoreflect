@@ -5,6 +5,7 @@ package dynamic
 import (
 	"bytes"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -18,6 +19,7 @@ import (
 	"github.com/golang/protobuf/jsonpb"
 	"github.com/golang/protobuf/proto"
 	"google.golang.org/protobuf/types/descriptorpb"
+
 	// link in the well-known-types that have a special JSON format
 	_ "google.golang.org/protobuf/types/known/anypb"
 	_ "google.golang.org/protobuf/types/known/durationpb"
@@ -48,6 +50,20 @@ var wellKnownTypeNames = map[string]struct{}{
 	"google.protobuf.BoolValue":   {},
 	"google.protobuf.StringValue": {},
 	"google.protobuf.BytesValue":  {},
+}
+
+type BytesRepresentation int
+
+const (
+	BytesAsBase64 BytesRepresentation = iota
+	BytesAsHex
+	BytesAsString
+)
+
+var bytesRepr BytesRepresentation
+
+func SetDefaultBytesRepresentation(b BytesRepresentation) {
+	bytesRepr = b
 }
 
 // MarshalJSON serializes this message to bytes in JSON format, returning an
@@ -428,7 +444,15 @@ func marshalKnownFieldValueJSON(b *indentBuffer, fd *desc.FieldDescriptor, v int
 		_, err := b.WriteString(strconv.FormatBool(rv.Bool()))
 		return err
 	case reflect.Slice:
-		bstr := base64.StdEncoding.EncodeToString(rv.Bytes())
+		var bstr string
+		switch bytesRepr {
+		case BytesAsBase64:
+			bstr = base64.StdEncoding.EncodeToString(rv.Bytes())
+		case BytesAsHex:
+			bstr = "0x" + hex.EncodeToString(rv.Bytes())
+		case BytesAsString:
+			bstr = string(rv.Bytes())
+		}
 		return writeJsonString(b, bstr)
 	case reflect.String:
 		return writeJsonString(b, rv.String())

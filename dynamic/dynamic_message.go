@@ -84,6 +84,7 @@ type Message struct {
 	extraFields   map[int32]*desc.FieldDescriptor
 	values        map[int32]interface{}
 	unknownFields map[int32][]UnknownField
+	bytesRepr     BytesRepresentation
 }
 
 // UnknownField represents a field that was parsed from the binary wire
