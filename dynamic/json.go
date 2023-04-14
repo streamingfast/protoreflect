@@ -15,6 +15,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"unicode"
 
 	"github.com/golang/protobuf/jsonpb"
 	"github.com/golang/protobuf/proto"
@@ -452,6 +453,12 @@ func marshalKnownFieldValueJSON(b *indentBuffer, fd *desc.FieldDescriptor, v int
 			bstr = "0x" + hex.EncodeToString(rv.Bytes())
 		case BytesAsString:
 			bstr = string(rv.Bytes())
+			bstr = strings.Map(func(r rune) rune {
+				if unicode.IsGraphic(r) {
+					return r
+				}
+				return '·'
+			}, bstr)
 		}
 		return writeJsonString(b, bstr)
 	case reflect.String:
