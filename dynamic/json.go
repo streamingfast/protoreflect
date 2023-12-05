@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"github.com/mr-tron/base58"
 	"io"
 	"io/ioutil"
 	"math"
@@ -59,6 +60,7 @@ const (
 	BytesAsBase64 BytesRepresentation = iota
 	BytesAsHex
 	BytesAsString
+	BytesAsBase58
 )
 
 var bytesRepr BytesRepresentation
@@ -449,6 +451,8 @@ func marshalKnownFieldValueJSON(b *indentBuffer, fd *desc.FieldDescriptor, v int
 		switch bytesRepr {
 		case BytesAsBase64:
 			bstr = base64.StdEncoding.EncodeToString(rv.Bytes())
+		case BytesAsBase58:
+			bstr = base58.Encode(rv.Bytes())
 		case BytesAsHex:
 			bstr = "0x" + hex.EncodeToString(rv.Bytes())
 		case BytesAsString:
