@@ -319,7 +319,7 @@ func (p *Printer) printProto(dsc desc.Descriptor, out io.Writer) error {
 	extendOptionLocations(sourceInfo, fdp.GetSourceCodeInfo().GetLocation())
 
 	var reg protoregistry.Types
-	internal.RegisterTypesForFile(&reg, dsc.GetFile().UnwrapFile())
+	internal.RegisterTypesVisibleToFile(&reg, dsc.GetFile().UnwrapFile())
 	reparseUnknown(&reg, fdp.ProtoReflect())
 
 	path := findElement(dsc)
@@ -532,6 +532,10 @@ func (p *Printer) printFile(fd *desc.FileDescriptor, reg *protoregistry.Types, w
 	si := sourceInfo.Get(path)
 	p.printElement(false, si, w, 0, func(w *writer) {
 		syn := fdp.GetSyntax()
+		if syn == "editions" {
+			_, _ = fmt.Fprintf(w, "edition = %q;", strings.TrimPrefix(fdp.GetEdition().String(), "EDITION_"))
+			return
+		}
 		if syn == "" {
 			syn = "proto2"
 		}
@@ -777,6 +781,13 @@ func (p *Printer) typeString(fld *desc.FieldDescriptor, scope string) string {
 	if fld.IsMap() {
 		return fmt.Sprintf("map<%s, %s>", p.typeString(fld.GetMapKeyType(), scope), p.typeString(fld.GetMapValueType(), scope))
 	}
+	fldProto := fld.AsFieldDescriptorProto()
+	if fldProto.Type == nil && fldProto.TypeName != nil {
+		// In an unlinked proto, the type may be absent because it is not known
+		// whether the symbol is a message or an enum. In that case, just return
+		// the type name.
+		return fldProto.GetTypeName()
+	}
 	switch fld.GetType() {
 	case descriptorpb.FieldDescriptorProto_TYPE_INT32:
 		return "int32"
@@ -977,7 +988,7 @@ func (p *Printer) printMessageBody(md *desc.MessageDescriptor, reg *protoregistr
 				addrs = append(addrs, elnext)
 				skip[rn] = true
 			}
-			p.printReservedNames(names, addrs, w, sourceInfo, path, indent)
+			p.printReservedNames(names, addrs, w, sourceInfo, path, indent, useQuotedReserved(md.GetFile()))
 		}
 	}
 }
@@ -1056,7 +1067,7 @@ func (p *Printer) printField(fld *desc.FieldDescriptor, reg *protoregistry.Types
 		// we use negative values for "extras" keys so they can't collide
 		// with legit option tags
 
-		if !fld.GetFile().IsProto3() && fld.AsFieldDescriptorProto().DefaultValue != nil {
+		if fld.UnwrapField().HasPresence() && fld.AsFieldDescriptorProto().DefaultValue != nil {
 			defVal := fld.GetDefaultValue()
 			if fld.GetEnumType() != nil {
 				defVal = ident(fld.GetEnumType().FindValueByNumber(defVal.(int32)).GetName())
@@ -1090,7 +1101,8 @@ func (p *Printer) printField(fld *desc.FieldDescriptor, reg *protoregistry.Types
 func shouldEmitLabel(fld *desc.FieldDescriptor) bool {
 	return fld.IsProto3Optional() ||
 		(!fld.IsMap() && fld.GetOneOf() == nil &&
-			(fld.GetLabel() != descriptorpb.FieldDescriptorProto_LABEL_OPTIONAL || !fld.GetFile().IsProto3()))
+			(fld.GetLabel() != descriptorpb.FieldDescriptorProto_LABEL_OPTIONAL ||
+				fld.GetFile().UnwrapFile().Syntax() == protoreflect.Proto2))
 }
 
 func labelString(lbl descriptorpb.FieldDescriptorProto_Label) string {
@@ -1269,7 +1281,11 @@ func (p *Printer) printReservedRanges(ranges []reservedRange, maxVal int32, addr
 	_, _ = fmt.Fprintln(w, ";")
 }
 
-func (p *Printer) printReservedNames(names []string, addrs []elementAddr, w *writer, sourceInfo internal.SourceInfoMap, parentPath []int32, indent int) {
+func useQuotedReserved(fd *desc.FileDescriptor) bool {
+	return fd.AsFileDescriptorProto().GetEdition() < descriptorpb.Edition_EDITION_2023
+}
+
+func (p *Printer) printReservedNames(names []string, addrs []elementAddr, w *writer, sourceInfo internal.SourceInfoMap, parentPath []int32, indent int, useQuotes bool) {
 	p.indent(w, indent)
 	_, _ = fmt.Fprint(w, "reserved ")
 
@@ -1282,7 +1298,11 @@ func (p *Printer) printReservedNames(names []string, addrs []elementAddr, w *wri
 		}
 		el := addrs[i]
 		si := sourceInfo.Get(append(parentPath, el.elementType, int32(el.elementIndex)))
-		p.printElementString(si, w, indent, quotedString(name))
+		if useQuotes {
+			p.printElementString(si, w, indent, quotedString(name))
+		} else {
+			p.printElementString(si, w, indent, name)
+		}
 	}
 
 	_, _ = fmt.Fprintln(w, ";")
@@ -1374,7 +1394,7 @@ func (p *Printer) printEnum(ed *desc.EnumDescriptor, reg *protoregistry.Types, w
 					addrs = append(addrs, elnext)
 					skip[rn] = true
 				}
-				p.printReservedNames(names, addrs, w, sourceInfo, path, indent)
+				p.printReservedNames(names, addrs, w, sourceInfo, path, indent, useQuotedReserved(ed.GetFile()))
 			}
 		}
 
@@ -1976,7 +1996,7 @@ func uninterpretedToOptions(uninterp []*descriptorpb.UninterpretedOption) []opti
 		case unint.NegativeIntValue != nil:
 			v = unint.GetNegativeIntValue()
 		case unint.AggregateValue != nil:
-			v = ident(unint.GetAggregateValue())
+			v = ident("{ " + unint.GetAggregateValue() + " }")
 		}
 
 		opts[i] = option{name: buf.String(), val: v}
@@ -2015,7 +2035,7 @@ func quotedBytes(s string) string {
 		case '\t':
 			b.WriteString("\\t")
 		case '"':
-			b.WriteString("\\")
+			b.WriteString("\\\"")
 		case '\\':
 			b.WriteString("\\\\")
 		default:
@@ -2061,7 +2081,7 @@ func quotedString(s string) string {
 		case '\t':
 			b.WriteString("\\t")
 		case '"':
-			b.WriteString("\\")
+			b.WriteString("\\\"")
 		case '\\':
 			b.WriteString("\\\\")
 		default:
@@ -2137,10 +2157,19 @@ func (a elementAddrs) Less(i, j int) bool {
 		return vi.GetNumber() < vj.GetNumber()
 
 	case *desc.EnumValueDescriptor:
-		// enum values ordered by number then name
+		// enum values ordered by number then name,
+		// but first value number must be 0 for open enums
 		vj := dj.(*desc.EnumValueDescriptor)
 		if vi.GetNumber() == vj.GetNumber() {
 			return vi.GetName() < vj.GetName()
+		}
+		if !vi.GetEnum().UnwrapEnum().IsClosed() {
+			if vj.GetNumber() == 0 {
+				return false
+			}
+			if vi.GetNumber() == 0 {
+				return true
+			}
 		}
 		return vi.GetNumber() < vj.GetNumber()
 
@@ -2390,8 +2419,30 @@ type customSortOrder struct {
 }
 
 func (cso customSortOrder) Less(i, j int) bool {
-	ei := asElement(cso.at(cso.addrs[i]))
-	ej := asElement(cso.at(cso.addrs[j]))
+	// Regardless of the custom sort order, for proto3 files,
+	// the enum value zero MUST be first. So we override the
+	// custom sort order to make sure the file will be valid
+	// and can compile.
+	addri := cso.addrs[i]
+	addrj := cso.addrs[j]
+	di := cso.at(addri)
+	dj := cso.at(addrj)
+	if addri.elementType == addrj.elementType {
+		if vi, ok := di.(*desc.EnumValueDescriptor); ok {
+			vj := dj.(*desc.EnumValueDescriptor)
+			if !vi.GetEnum().UnwrapEnum().IsClosed() {
+				if vi.GetNumber() == 0 {
+					return true
+				}
+				if vj.GetNumber() == 0 {
+					return false
+				}
+			}
+		}
+	}
+
+	ei := asElement(di)
+	ej := asElement(dj)
 	return cso.less(ei, ej)
 }
 

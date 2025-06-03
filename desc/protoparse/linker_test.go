@@ -285,7 +285,7 @@ func TestLinkerValidation(t *testing.T) {
 			map[string]string{
 				"foo.proto": "package fu.baz; message foobar{ optional string a = 1 [default = { a: \"abc\" }]; }",
 			},
-			"foo.proto:1:66: field fu.baz.foobar.a: default value cannot be a message",
+			"foo.proto:1:66: field fu.baz.foobar.a: option default: default value cannot be a message",
 		},
 		{
 			map[string]string{
@@ -427,7 +427,7 @@ func TestLinkerValidation(t *testing.T) {
 					"extend google.protobuf.FileOptions { optional foo f = 20000; }\n" +
 					"option (f) = { a: \"a\" };\n",
 			},
-			"foo.proto:1:1: error in file options: some required fields missing: (f).b",
+			"foo.proto:4:1: error in file options: some required fields missing: (f).b",
 		},
 		{
 			map[string]string{
@@ -522,18 +522,6 @@ func TestLinkerValidation(t *testing.T) {
 					"message Baz { option (foo) = { Bar< name: \"abc\" > }; }\n",
 			},
 			"", // should succeed
-		},
-		{
-			map[string]string{
-				"foo.proto": "syntax = \"proto2\";\n" +
-					"import \"google/protobuf/descriptor.proto\";\n" +
-					"message Foo {\n" +
-					"  optional group Bar = 1 { optional string name = 1; }\n" +
-					"}\n" +
-					"extend google.protobuf.MessageOptions { optional Foo foo = 10001; }\n" +
-					"message Baz { option (foo) = { bar< name: \"abc\" > }; }\n",
-			},
-			"foo.proto:7:32: message Baz: option (foo): field bar not found (did you mean the group named Bar?)",
 		},
 		{
 			map[string]string{
@@ -1258,7 +1246,7 @@ func TestProto3Enums(t *testing.T) {
 			_, err := Parser{Accessor: acc}.ParseFiles("f1.proto", "f2.proto")
 
 			if o1 != o2 && o2 == "proto3" {
-				expected := "f2.proto:1:54: field foo.bar: cannot use proto2 enum bar in a proto3 message"
+				expected := "f2.proto:1:54: cannot use closed enum bar in a field with implicit presence"
 				if err == nil {
 					t.Errorf("expecting validation error; instead got no error")
 				} else if err.Error() != expected {

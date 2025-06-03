@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"math"
+	"math/rand"
 	"os"
 	"reflect"
 	"strings"
@@ -471,8 +472,22 @@ func TestFileDescriptorObjectGraph(t *testing.T) {
 					},
 				},
 			}},
-			"enums":    {(*FileDescriptor).GetEnumTypes, nil},
-			"services": {(*FileDescriptor).GetServices, nil},
+			"enums": {(*FileDescriptor).GetEnumTypes, nil},
+			"services": {(*FileDescriptor).GetServices, []descCase{
+				{
+					name: "testprotos.SomeService",
+					references: map[string]childCases{
+						"methods": {(*ServiceDescriptor).GetMethods, []descCase{
+							{
+								name: "testprotos.SomeService.SomeRPC",
+							},
+							{
+								name: "testprotos.SomeService.SomeOtherRPC",
+							},
+						}},
+					},
+				},
+			}},
 			"extensions": {(*FileDescriptor).GetExtensions, []descCase{
 				{
 					name:   "testprotos.xtm",
@@ -1245,4 +1260,41 @@ func TestProto3Optional(t *testing.T) {
 	}
 	fld := fd.FindSymbol("some_custom_options").(*FieldDescriptor)
 	testutil.Require(t, fld.IsProto3Optional())
+}
+
+func BenchmarkMessageDescriptorFindField20(b *testing.B) {
+	md, _ := LoadMessageDescriptor("testprotos.Frobnitz")
+	name := randStringRunes(20)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		md.FindFieldByName(name)
+	}
+}
+
+func BenchmarkMessageDescriptorFindField100(b *testing.B) {
+	md, _ := LoadMessageDescriptor("testprotos.Frobnitz")
+	name := randStringRunes(100)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		md.FindFieldByName(name)
+	}
+}
+
+func BenchmarkMessageDescriptorFindField500(b *testing.B) {
+	md, _ := LoadMessageDescriptor("testprotos.Frobnitz")
+	name := randStringRunes(500)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		md.FindFieldByName(name)
+	}
+}
+
+var letterRunes = []rune("abcdefghijklmnopqrstuvwxyz")
+
+func randStringRunes(n int) string {
+	b := make([]rune, n)
+	for i := range b {
+		b[i] = letterRunes[rand.Intn(len(letterRunes))]
+	}
+	return string(b)
 }

@@ -2,7 +2,7 @@
 .PHONY: ci
 # TODO: add staticcheck back ASAP; removed temporarily because it
 # complains about a lot of APIs deprecated by protobuf 1.4
-ci: deps checkgofmt vet predeclared ineffassign test test-nounsafe
+ci: deps checkgofmt vet ineffassign test test-nounsafe
 
 .PHONY: deps
 deps:
@@ -51,11 +51,6 @@ ineffassign:
 	    exit 1; \
 	fi
 
-.PHONY: predeclared
-predeclared:
-	@go install github.com/nishanths/predeclared@v0.2.2
-	predeclared ./...
-
 # Intentionally omitted from CI, but target here for ad-hoc reports.
 .PHONY: golint
 golint:
@@ -69,8 +64,9 @@ errcheck:
 	errcheck ./...
 
 .PHONY: test
-test:
+test: generate
 	go test -cover -race ./...
+	./desc/protoprint/testfiles/check-protos.sh > /dev/null
 
 .PHONY: test-nounsafe
 test-nounsafe:

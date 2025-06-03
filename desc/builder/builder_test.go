@@ -2,7 +2,7 @@ package builder
 
 import (
 	"fmt"
-	"io/ioutil"
+	"io"
 	"os"
 	"sort"
 	"strings"
@@ -342,10 +342,17 @@ func TestProto3Optional(t *testing.T) {
 }
 
 func TestBuildersFromDescriptors(t *testing.T) {
-	for _, s := range []string{"desc_test1.proto", "desc_test2.proto", "desc_test_defaults.proto", "desc_test_options.proto", "desc_test_proto3.proto", "desc_test_wellknowntypes.proto", "nopkg/desc_test_nopkg.proto", "nopkg/desc_test_nopkg_new.proto", "pkg/desc_test_pkg.proto"} {
-		fd, err := desc.LoadFileDescriptor(s)
-		testutil.Ok(t, err)
-		roundTripFile(t, fd)
+	for _, s := range []string{
+		"desc_test1.proto", "desc_test2.proto",
+		"desc_test_defaults.proto", "desc_test_editions.proto", "desc_test_options.proto",
+		"desc_test_proto3.proto", "desc_test_wellknowntypes.proto",
+		"nopkg/desc_test_nopkg.proto", "nopkg/desc_test_nopkg_new.proto", "pkg/desc_test_pkg.proto",
+	} {
+		t.Run(s, func(t *testing.T) {
+			fd, err := desc.LoadFileDescriptor(s)
+			testutil.Ok(t, err)
+			roundTripFile(t, fd)
+		})
 	}
 }
 
@@ -549,7 +556,7 @@ func loadProtoset(path string) (*desc.FileDescriptor, error) {
 		return nil, err
 	}
 	defer f.Close()
-	bb, err := ioutil.ReadAll(f)
+	bb, err := io.ReadAll(f)
 	if err != nil {
 		return nil, err
 	}
@@ -1155,17 +1162,34 @@ func TestCustomOptionsDiscoveredInDependencies(t *testing.T) {
 	fileDesc, err := file.Build()
 	testutil.Ok(t, err)
 
+	// Another file that imports the options. Since it's not a public import, presence
+	// of this file should not prevent builder from correctly adding options.proto dependency
+	// in the "auto" case below.
+	otherFileDesc, err := NewFile("other.proto").AddImportedDependency(fileDesc).Build()
+	testutil.Ok(t, err)
+
+	regWithOpts := &dynamic.ExtensionRegistry{}
+	regWithOpts.AddExtensionsFromFileRecursively(fileDesc)
+
 	// Now we can test referring to these and making sure they show up correctly
 	// in built descriptors
-	for name, useBuilder := range map[string]bool{"descriptor": false, "builder": true} {
+	for name, useBuilder := range map[string]*bool{"descriptor": proto.Bool(false), "builder": proto.Bool(true), "auto": nil} {
 		newFile := func() *FileBuilder {
-			fb := NewFile("foo.proto")
-			if useBuilder {
-				fb.AddDependency(file)
-			} else {
-				fb.AddImportedDependency(fileDesc)
+			fb := NewFile("foo.proto").AddImportedDependency(otherFileDesc)
+			if useBuilder != nil {
+				if *useBuilder {
+					fb.AddDependency(file)
+				} else {
+					fb.AddImportedDependency(fileDesc)
+				}
 			}
 			return fb
+		}
+		var extReg *dynamic.ExtensionRegistry
+		if useBuilder == nil {
+			// if providing neither builder nor descriptor, we need to provide
+			// a registry for resolving custom options
+			extReg = regWithOpts
 		}
 		t.Run(name, func(t *testing.T) {
 			t.Run("file options", func(t *testing.T) {
@@ -1175,7 +1199,7 @@ func TestCustomOptionsDiscoveredInDependencies(t *testing.T) {
 				testutil.Ok(t, err)
 				err = dynamic.SetExtension(fb.Options, ext, "fubar")
 				testutil.Ok(t, err)
-				checkBuildWithImportedExtensions(t, fb)
+				checkBuildWithImportedExtensions(t, fb, extReg)
 			})
 
 			t.Run("message options", func(t *testing.T) {
@@ -1188,7 +1212,7 @@ func TestCustomOptionsDiscoveredInDependencies(t *testing.T) {
 
 				fb := newFile()
 				fb.AddMessage(mb)
-				checkBuildWithImportedExtensions(t, mb)
+				checkBuildWithImportedExtensions(t, mb, extReg)
 			})
 
 			t.Run("field options", func(t *testing.T) {
@@ -1203,7 +1227,7 @@ func TestCustomOptionsDiscoveredInDependencies(t *testing.T) {
 
 				fb := newFile()
 				fb.AddMessage(mb)
-				checkBuildWithImportedExtensions(t, flb)
+				checkBuildWithImportedExtensions(t, flb, extReg)
 			})
 
 			t.Run("oneof options", func(t *testing.T) {
@@ -1219,7 +1243,7 @@ func TestCustomOptionsDiscoveredInDependencies(t *testing.T) {
 
 				fb := newFile()
 				fb.AddMessage(mb)
-				checkBuildWithImportedExtensions(t, oob)
+				checkBuildWithImportedExtensions(t, oob, extReg)
 			})
 
 			t.Run("extension range options", func(t *testing.T) {
@@ -1232,7 +1256,7 @@ func TestCustomOptionsDiscoveredInDependencies(t *testing.T) {
 
 				fb := newFile()
 				fb.AddMessage(mb)
-				checkBuildWithImportedExtensions(t, mb)
+				checkBuildWithImportedExtensions(t, mb, extReg)
 			})
 
 			t.Run("enum options", func(t *testing.T) {
@@ -1246,7 +1270,7 @@ func TestCustomOptionsDiscoveredInDependencies(t *testing.T) {
 
 				fb := newFile()
 				fb.AddEnum(eb)
-				checkBuildWithImportedExtensions(t, eb)
+				checkBuildWithImportedExtensions(t, eb, extReg)
 			})
 
 			t.Run("enum val options", func(t *testing.T) {
@@ -1261,7 +1285,7 @@ func TestCustomOptionsDiscoveredInDependencies(t *testing.T) {
 
 				fb := newFile()
 				fb.AddEnum(eb)
-				checkBuildWithImportedExtensions(t, evb)
+				checkBuildWithImportedExtensions(t, evb, extReg)
 			})
 
 			t.Run("service options", func(t *testing.T) {
@@ -1274,7 +1298,7 @@ func TestCustomOptionsDiscoveredInDependencies(t *testing.T) {
 
 				fb := newFile()
 				fb.AddService(sb)
-				checkBuildWithImportedExtensions(t, sb)
+				checkBuildWithImportedExtensions(t, sb, extReg)
 			})
 
 			t.Run("method options", func(t *testing.T) {
@@ -1293,20 +1317,22 @@ func TestCustomOptionsDiscoveredInDependencies(t *testing.T) {
 
 				fb := newFile()
 				fb.AddService(sb).AddMessage(req).AddMessage(resp)
-				checkBuildWithImportedExtensions(t, mtb)
+				checkBuildWithImportedExtensions(t, mtb, extReg)
 			})
 		})
 	}
 }
 
-func checkBuildWithImportedExtensions(t *testing.T, builder Builder) {
+func checkBuildWithImportedExtensions(t *testing.T, builder Builder, extReg *dynamic.ExtensionRegistry) {
 	// requiring options and succeeding (since they are defined in explicit import)
-	var opts BuilderOptions
-	opts.RequireInterpretedOptions = true
+	opts := BuilderOptions{
+		RequireInterpretedOptions: true,
+		Extensions:                extReg,
+	}
 	d, err := opts.Build(builder)
 	testutil.Ok(t, err)
-	// the only import is for the custom options
-	testutil.Eq(t, []string{"options.proto"}, d.GetFile().AsFileDescriptorProto().GetDependency())
+	// the only import is the explicitly added one and one added for the custom options
+	testutil.Eq(t, []string{"options.proto", "other.proto"}, d.GetFile().AsFileDescriptorProto().GetDependency())
 }
 
 func TestUseOfExtensionRegistry(t *testing.T) {
@@ -1577,6 +1603,37 @@ func TestPruneDependencies(t *testing.T) {
 	testutil.Eq(t, extDesc.GetFile().GetName(), newFileDesc.GetDependencies()[0].GetName())
 }
 
+func TestInterleavedEnumNumbers(t *testing.T) {
+	en := NewEnum("Options").
+		AddValue(NewEnumValue("OPTION_1").SetNumber(-1)).
+		AddValue(NewEnumValue("OPTION_2")).
+		AddValue(NewEnumValue("OPTION_3").SetNumber(2)).
+		AddValue(NewEnumValue("OPTION_4").SetNumber(1)).
+		AddValue(NewEnumValue("OPTION_5")).
+		AddValue(NewEnumValue("OPTION_6").SetNumber(100))
+
+	ed, err := en.Build()
+	testutil.Ok(t, err)
+
+	testutil.Require(t, ed.FindValueByName("OPTION_1") != nil)
+	testutil.Eq(t, int32(-1), ed.FindValueByName("OPTION_1").GetNumber())
+
+	testutil.Require(t, ed.FindValueByName("OPTION_2") != nil)
+	testutil.Eq(t, int32(0), ed.FindValueByName("OPTION_2").GetNumber())
+
+	testutil.Require(t, ed.FindValueByName("OPTION_3") != nil)
+	testutil.Eq(t, int32(2), ed.FindValueByName("OPTION_3").GetNumber())
+
+	testutil.Require(t, ed.FindValueByName("OPTION_4") != nil)
+	testutil.Eq(t, int32(1), ed.FindValueByName("OPTION_4").GetNumber())
+
+	testutil.Require(t, ed.FindValueByName("OPTION_5") != nil)
+	testutil.Eq(t, int32(3), ed.FindValueByName("OPTION_5").GetNumber())
+
+	testutil.Require(t, ed.FindValueByName("OPTION_6") != nil)
+	testutil.Eq(t, int32(100), ed.FindValueByName("OPTION_6").GetNumber())
+}
+
 func TestInvalid(t *testing.T) {
 	testCases := []struct {
 		name          string
@@ -1591,7 +1648,7 @@ func TestInvalid(t *testing.T) {
 						NewMessage("Foo").AddField(NewField("foo", FieldTypeBool()).SetRequired()),
 					)
 			},
-			expectedError: "proto3 does not allow required fields",
+			expectedError: "only proto2 allows required fields",
 		},
 		{
 			name: "extension range in proto3",
@@ -1611,9 +1668,7 @@ func TestInvalid(t *testing.T) {
 						NewMessage("Foo").AddField(NewGroupField(NewMessage("Bar"))),
 					)
 			},
-			// NB: This is the actual error message returned by the protobuf runtime. It is
-			//     misleading since it says proto2 instead of proto3.
-			expectedError: "invalid group: invalid under proto2 semantics",
+			expectedError: "invalid group: invalid under proto3 semantics",
 		},
 		{
 			name: "default value in proto3",
@@ -1623,7 +1678,7 @@ func TestInvalid(t *testing.T) {
 						NewMessage("Foo").AddField(NewField("foo", FieldTypeString()).SetDefaultValue("abc")),
 					)
 			},
-			expectedError: "invalid default: cannot be specified under proto3 semantics",
+			expectedError: "invalid default: cannot be specified with implicit field presence",
 		},
 		{
 			name: "extension tag outside range",
