@@ -1228,6 +1228,11 @@ func (r *anyResolver) Resolve(typeUrl string) (proto.Message, error) {
 	if r.other != nil {
 		msg, err := r.other.Resolve(typeUrl)
 		if err == nil {
+			// If the message is a dynamic message, ensure it uses the current bytes representation
+			if dm, ok := msg.(*Message); ok {
+				// Set the bytes representation to the current global setting
+				dm.bytesRepr = bytesRepr
+			}
 			return msg, nil
 		}
 	}
@@ -1237,7 +1242,13 @@ func (r *anyResolver) Resolve(typeUrl string) (proto.Message, error) {
 	for _, f := range r.files {
 		md := r.findMessage(f, mname, checked)
 		if md != nil {
-			return r.mf.NewMessage(md), nil
+			// Create a new dynamic message with the current bytes representation
+			dm := r.mf.NewMessage(md)
+			// Ensure the dynamic message uses the current bytes representation
+			if dm, ok := dm.(*Message); ok {
+				dm.bytesRepr = bytesRepr
+			}
+			return dm, nil
 		}
 	}
 	// failing that, see if the message factory knows about this type
@@ -1249,6 +1260,10 @@ func (r *anyResolver) Resolve(typeUrl string) (proto.Message, error) {
 	}
 	m := ktr.CreateIfKnown(mname)
 	if m != nil {
+		// If the message is a dynamic message, ensure it uses the current bytes representation
+		if dm, ok := m.(*Message); ok {
+			dm.bytesRepr = bytesRepr
+		}
 		return m, nil
 	}
 
@@ -1257,7 +1272,12 @@ func (r *anyResolver) Resolve(typeUrl string) (proto.Message, error) {
 	if mt == nil {
 		return nil, fmt.Errorf("unknown message type %q", mname)
 	}
-	return reflect.New(mt.Elem()).Interface().(proto.Message), nil
+	msg := reflect.New(mt.Elem()).Interface().(proto.Message)
+	// If the message is a dynamic message, ensure it uses the current bytes representation
+	if dm, ok := msg.(*Message); ok {
+		dm.bytesRepr = bytesRepr
+	}
+	return msg, nil
 }
 
 func (r *anyResolver) findMessage(fd *desc.FileDescriptor, msgName string, checked map[*desc.FileDescriptor]struct{}) *desc.MessageDescriptor {
